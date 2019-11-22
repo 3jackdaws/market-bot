@@ -1,0 +1,5 @@
+version: '3'
+services:
+  bot:
+    image: 3jackdaws/ticker-bot:py
+    build: .
