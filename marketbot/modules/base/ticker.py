@@ -9,7 +9,7 @@ from time import time
 logger = logging.getLogger("BASE.TICKER")
 
 TICKER_PATTERN = r'\[([a-zA-Z]+)\]'
-EXPRESSION_PATTERN = TICKER_PATTERN + r'([.][a-z]+\(([^_]*)\)+)?'
+EXPRESSION_PATTERN = TICKER_PATTERN + r'([.][a-z]+\(([^_()]*)\))?'
 
 def get_embed(title, url=None, fields=[], color=6750105):
     e = Embed(title=title, url=url)
@@ -27,12 +27,15 @@ class Stock:
         self.ticker = ticker.upper()
 
     async def default(self):
-        start = time()
         asset, quote, rating = await asyncio.gather(
             api.get_asset(self.ticker), 
             api.get_quote(self.ticker),
             api.get_rating(self.ticker)
         )
+
+        # print(asset)
+        # print(quote)
+        # print(rating)
 
         e = get_embed(
             asset['name'],
@@ -40,19 +43,20 @@ class Stock:
             fields=[
                 ("Price", quote['price']),
                 ("Change (today)", quote['change%']),
-                ("Rating", rating['rating']),
+                ("Rating", rating['rating'] if rating else "N/A"),
             ]
         )
-    
-        end = time()
-        logger.info(f"[{self.ticker}].default() executed in {round((end - start) * 1000, 2)}ms")
         return e
 
     async def change(self, timespan="7 d"):
         start = time()
         matches = re.match("([0-9]+) ?(m|d)", timespan)
-        limit = matches.group(1) or "7"
-        timespan = matches.group(2) or "d"
+        if matches:
+            limit = matches.group(1) or "7"
+            timespan = matches.group(2) or "d"
+        else:
+            limit = "7"
+            timespan = "d"
         
         try:
             timespan = {
@@ -77,7 +81,7 @@ class Stock:
                 (f"Change ({change['period']})", f"{change['change%']}%"),
             ])
         end = time()
-        logger.info(f"[{self.ticker}].change() executed in {round((end - start) * 1000, 2)}ms")
+        
         return e
         
     
@@ -88,24 +92,30 @@ class Stock:
 
 
 async def manage_stock_object(bot:Bot, message:Message):
-    expr = Stock.regex.match(message.content)
+    expr = Stock.regex.search(message.content)
+    
     if expr:
+        
         expression = expr.group(0)
+        logger.info(f'[{message.author.name}]: "{message.content}" - Expression: {expression}')
         ticker = expr.group(1)
         arguments = expr.group(3)
 
         stock = Stock(ticker)
-        expression = expression.replace(f"[{ticker}]", "s", 1)
+        stock_expr = expression.replace(f"[{ticker}]", "s", 1)
         if arguments:
-            expression = expression.replace(arguments, f"'{arguments}'")
+            stock_expr = stock_expr.replace(arguments, f"'{arguments}'")
 
         try:
-            output = eval(expression, {'s':stock})
+            start = time()
+            # logger.info("Evaluating " + stock_expr)
+            output = eval(stock_expr, {'s':stock})
             if asyncio.iscoroutine(output):
                 output = await output
             if isinstance(output, Stock):
                 output = await output.default()
-
+            end = time()
+            logger.info(f"{expression} executed in {round((end - start) * 1000, 2)}ms")
             channel = bot.get_channel(message.channel.id)  # type: TextChannel
             if isinstance(output, Embed):
                 await util.opt_webhook_send_embed(channel, output)
